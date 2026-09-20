@@ -1,0 +1,37 @@
+name: iOS Build (no Apple account)
+on:
+  workflow_dispatch:
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      EXPO_PUBLIC_API_ORIGIN: https://api.connectkro.com
+      APP_NAME: ConnectKro
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx expo prebuild --platform ios --clean
+      - name: Simulator build
+        run: |
+          xcodebuild -workspace ios/$APP_NAME.xcworkspace -scheme $APP_NAME -configuration Release -sdk iphonesimulator -derivedDataPath build-sim CODE_SIGNING_ALLOWED=NO | tail -n 40
+          cd build-sim/Build/Products/Release-iphonesimulator
+          zip -r $GITHUB_WORKSPACE/app/$APP_NAME-simulator.zip $APP_NAME.app
+      - name: Unsigned IPA
+        run: |
+          xcodebuild -workspace ios/$APP_NAME.xcworkspace -scheme $APP_NAME -configuration Release -sdk iphoneos -derivedDataPath build-device CODE_SIGNING_ALLOWED=NO | tail -n 40
+          mkdir Payload
+          cp -r build-device/Build/Products/Release-iphoneos/$APP_NAME.app Payload/
+          zip -r $APP_NAME-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-builds
+          path: |
+            app/ConnectKro-simulator.zip
+            app/ConnectKro-unsigned.ipa
