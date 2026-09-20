@@ -34,9 +34,6 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
     "extra": {
       "eas": {
         "projectId": "bc79a60b-e7b6-42fd-97b7-202d0c69c5c4"
@@ -54,7 +51,19 @@
           }
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "QR code scan karne ke liye camera chahiye."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Photo choose karne ke liye photos chahiye."
+        }
+      ]
     ]
   }
 }
