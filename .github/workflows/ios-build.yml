@@ -11,6 +11,7 @@ jobs:
       BUNDLE_ID: com.makaanzasaad.qrproject
     defaults:
       run:
+        shell: bash
         working-directory: app
     steps:
       - uses: actions/checkout@v4
@@ -40,20 +41,19 @@ jobs:
 
       - name: Simulator build
         run: |
-          xcodebuild -workspace ios/$APP_NAME.xcworkspace -scheme $APP_NAME -configuration Release -sdk iphonesimulator -derivedDataPath build-sim ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO | tail -n 40
+          xcodebuild -workspace ios/$APP_NAME.xcworkspace -scheme $APP_NAME -configuration Release -sdk iphonesimulator -derivedDataPath build-sim ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO ENABLE_USER_SCRIPT_SANDBOXING=NO 2>&1 | tee build-sim.log | tail -n 40
 
       - name: Patch simulator app
         run: |
           APP=build-sim/Build/Products/Release-iphonesimulator/$APP_NAME.app
           $RUNNER_TEMP/patch.sh "$APP" build-sim/Build/Products/Release-iphonesimulator ios-arm64_x86_64-simulator 2>&1 | tee patch-log.txt
+          ls -la "$APP" > debug-info.txt
 
       - name: Smoke test (crash log)
         continue-on-error: true
         run: |
           APP=build-sim/Build/Products/Release-iphonesimulator/$APP_NAME.app
           DEVICE=$(xcrun simctl list devices available | grep -m1 "iPhone" | grep -oE '[0-9A-F-]{36}')
-          echo "Device: $DEVICE" > debug-info.txt
-          ls "$APP/Frameworks" >> debug-info.txt 2>&1 || true
           xcrun simctl boot $DEVICE
           xcrun simctl bootstatus $DEVICE -b
           xcrun simctl install $DEVICE $APP
@@ -70,7 +70,7 @@ jobs:
 
       - name: Unsigned IPA
         run: |
-          xcodebuild -workspace ios/$APP_NAME.xcworkspace -scheme $APP_NAME -configuration Release -sdk iphoneos -derivedDataPath build-device CODE_SIGNING_ALLOWED=NO | tail -n 40
+          xcodebuild -workspace ios/$APP_NAME.xcworkspace -scheme $APP_NAME -configuration Release -sdk iphoneos -derivedDataPath build-device CODE_SIGNING_ALLOWED=NO ENABLE_USER_SCRIPT_SANDBOXING=NO 2>&1 | tee build-device.log | tail -n 40
           APP=build-device/Build/Products/Release-iphoneos/$APP_NAME.app
           $RUNNER_TEMP/patch.sh "$APP" build-device/Build/Products/Release-iphoneos ios-arm64 2>&1 | tee -a patch-log.txt
           mkdir Payload
@@ -93,4 +93,6 @@ jobs:
             app/shot.png
             app/debug-info.txt
             app/patch-log.txt
+            app/build-sim.log
+            app/build-device.log
             app/crash-reports
