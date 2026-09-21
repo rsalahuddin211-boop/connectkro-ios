@@ -20,11 +20,32 @@ jobs:
       - run: npm ci
       - run: npx expo prebuild --platform ios --clean
 
+      - name: Write patch script
+        run: |
+          cat > $RUNNER_TEMP/patch.sh <<'EOF'
+          #!/bin/bash
+          APP="$1"; PROD="$2"; SLICE="$3"
+          BIN="$APP/$(basename "$APP" .app)"
+          mkdir -p "$APP/Frameworks"
+          echo "Frameworks before:"; ls "$APP/Frameworks"
+          for name in $(otool -L "$BIN" | grep -o '@rpath/[^/]*\.framework' | sed 's#@rpath/##' | sort -u); do
+            if [ -d "$APP/Frameworks/$name" ]; then echo "ok $name"; continue; fi
+            src=$(find "$PROD" -type d -name "$name" -path "*XCFrameworkIntermediates*" | head -1)
+            if [ -z "$src" ]; then src=$(find ios -type d -path "*/$SLICE/$name" | head -1); fi
+            if [ -n "$src" ]; then echo "copy $name from $src"; cp -R "$src" "$APP/Frameworks/"; else echo "NOT FOUND $name"; fi
+          done
+          echo "Frameworks after:"; ls "$APP/Frameworks"
+          EOF
+          chmod +x $RUNNER_TEMP/patch.sh
+
       - name: Simulator build
         run: |
           xcodebuild -workspace ios/$APP_NAME.xcworkspace -scheme $APP_NAME -configuration Release -sdk iphonesimulator -derivedDataPath build-sim ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO | tail -n 40
-          cd build-sim/Build/Products/Release-iphonesimulator
-          zip -r $GITHUB_WORKSPACE/app/$APP_NAME-simulator.zip $APP_NAME.app
+
+      - name: Patch simulator app
+        run: |
+          APP=build-sim/Build/Products/Release-iphonesimulator/$APP_NAME.app
+          $RUNNER_TEMP/patch.sh "$APP" build-sim/Build/Products/Release-iphonesimulator ios-arm64_x86_64-simulator 2>&1 | tee patch-log.txt
 
       - name: Smoke test (crash log)
         continue-on-error: true
@@ -32,22 +53,28 @@ jobs:
           APP=build-sim/Build/Products/Release-iphonesimulator/$APP_NAME.app
           DEVICE=$(xcrun simctl list devices available | grep -m1 "iPhone" | grep -oE '[0-9A-F-]{36}')
           echo "Device: $DEVICE" > debug-info.txt
-          lipo -info $APP/$APP_NAME >> debug-info.txt 2>&1 || true
+          ls "$APP/Frameworks" >> debug-info.txt 2>&1 || true
           xcrun simctl boot $DEVICE
           xcrun simctl bootstatus $DEVICE -b
           xcrun simctl install $DEVICE $APP
           (xcrun simctl launch --console $DEVICE $BUNDLE_ID > launch.log 2>&1 &)
           sleep 30
           xcrun simctl io $DEVICE screenshot shot.png || true
-          xcrun simctl spawn $DEVICE log show --last 2m --style compact --predicate "process == \"$APP_NAME\"" > syslog.txt 2>&1 || true
           mkdir -p crash-reports
           cp ~/Library/Logs/DiagnosticReports/*$APP_NAME* crash-reports/ 2>/dev/null || true
+
+      - name: Zip simulator app
+        run: |
+          cd build-sim/Build/Products/Release-iphonesimulator
+          zip -r $GITHUB_WORKSPACE/app/$APP_NAME-simulator.zip $APP_NAME.app
 
       - name: Unsigned IPA
         run: |
           xcodebuild -workspace ios/$APP_NAME.xcworkspace -scheme $APP_NAME -configuration Release -sdk iphoneos -derivedDataPath build-device CODE_SIGNING_ALLOWED=NO | tail -n 40
+          APP=build-device/Build/Products/Release-iphoneos/$APP_NAME.app
+          $RUNNER_TEMP/patch.sh "$APP" build-device/Build/Products/Release-iphoneos ios-arm64 2>&1 | tee -a patch-log.txt
           mkdir Payload
-          cp -r build-device/Build/Products/Release-iphoneos/$APP_NAME.app Payload/
+          cp -r $APP Payload/
           zip -r $APP_NAME-unsigned.ipa Payload
 
       - uses: actions/upload-artifact@v4
@@ -63,7 +90,7 @@ jobs:
           name: debug-logs
           path: |
             app/launch.log
-            app/syslog.txt
             app/shot.png
             app/debug-info.txt
+            app/patch-log.txt
             app/crash-reports
